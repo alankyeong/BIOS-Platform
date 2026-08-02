@@ -4,7 +4,7 @@
 |---|---|
 | Document ID | DB-002 |
 | Title | BIOS Migration 001 — Core Platform Foundation |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Canonical |
 | Effective date | 2026-08-02 |
 | Owner | BIOS Executive Office — Data Architecture and Engineering |
@@ -39,7 +39,8 @@ This specification implements the reduced Migration 001 scope in [DB-001](DB-001
 The following labels distinguish authority:
 
 - **Canonical requirement:** required by the governing documents.
-- **Implementation decision — approval required:** a least-coupled choice not forced by the governing documents.
+- **Implementation decision — approved:** an Executive Office-approved implementation choice within canonical architecture.
+- **Deferred by design:** an intentionally excluded workflow that does not block Migration 001.
 - **Deferred:** valid future scope that Migration 001 must not encode.
 
 Any conflict with a governing document blocks the affected SQL until resolved; DB-002 does not silently override canonical architecture.
@@ -121,7 +122,7 @@ All database names use lowercase `snake_case` in accordance with CANON-001.
 
 ### 7.2 Recommendation
 
-**Implementation decision M001-D01 — approval required:** use an independent BIOS UUID primary key and a non-null, unique `auth_user_id` foreign key to `auth.users.id`.
+**Implementation decision M001-D01 — APPROVED:** use an independent BIOS UUID primary key and a non-null, unique `auth_user_id` foreign key to `auth.users.id`.
 
 This is the least-coupled option and matches DB-001’s proposed boundary. It preserves Supabase ownership of authentication while ensuring one Phase 1 profile per Auth identity. Migration 001 must not copy passwords, providers, MFA state, tokens, email verification state, or other Supabase-controlled fields.
 
@@ -158,12 +159,12 @@ BIOS-owned application representation of an authenticated Supabase identity. It 
 - A trusted provisioning path or authenticated self-provisioning path may create the profile only when `auth_user_id = auth.uid()`; SQL review must select one path and test it.
 - The authenticated person may read their own profile and update only approved self-service fields: `display_name` and `preferred_language_code`.
 - Migration 001 permits direct profile reads only by the profile owner and trusted server/exceptional administration paths. Co-member directory access is deferred until a workflow defines an approved projection or function; there is no global profile directory.
-- Status changes are trusted server or exceptional administration operations.
+- Newly provisioned BIOS profiles are `active`. Direct client mutation of `status` is prohibited. Migration 001 must not create a user-facing or tenant-admin profile-status transition function.
 - Ordinary deletion is prohibited. Auth-user deletion does not cascade; retention/anonymization is a later governed workflow.
 
 #### Ownership, audit, and compatibility
 
-Profile records have no tenant owner. Authorization is derived through `tenant_memberships`. Profile creation, suspension, and deactivation are auditable when performed by BIOS-controlled functions. Future migrations may add identity links or Language FKs without changing membership ownership.
+Profile records have no tenant owner. Authorization is derived through `tenant_memberships` and always requires `profiles.status = active`. BIOS-managed transitions to `suspended` or `deactivated` are **M001-D07 — DEFERRED BY DESIGN** because they can affect memberships across multiple tenants and require explicit cross-tenant governance and last-active-tenant-admin semantics. Database security tests may establish non-active states through controlled test/privileged setup solely to prove that inactive profiles receive no authorization. This specification does not define the future transition workflow. Future migrations may add that governance or Language FKs without changing membership ownership.
 
 **Atlas dependency:** A-041. **Implementation dependency:** M001-D01.
 
@@ -279,7 +280,7 @@ Minimal shared platform role definitions used to demonstrate membership authoriz
 
 #### Implementation decision
 
-**M001-D02 — approval required:** roles are shared, platform-governed reference records in Migration 001. Tenant-defined roles are deferred. The minimum role records are:
+**M001-D02 — APPROVED:** roles are shared, platform-governed reference records in Migration 001. Tenant-defined roles are deferred. The minimum role records are:
 
 - `tenant_admin`
 - `analyst`
@@ -293,8 +294,8 @@ Authorization uses explicit minimal capability flags rather than treating role n
 |---|---|---:|---|---|
 | `id` | `uuid` | No | Generated UUID | Primary key, immutable |
 | `code` | `text` | No | None | Unique stable platform code |
-| `name` | `text` | No | None | Human-readable name |
-| `description` | `text` | No | Empty text | Bounded description |
+| `name` | `text` | No | None | Trimmed, non-empty human-readable name |
+| `description` | `text` | No | Empty text | Maximum 1,000 characters |
 | `can_manage_memberships` | `boolean` | No | `false` | Minimal capability |
 | `can_manage_role_assignments` | `boolean` | No | `false` | Minimal capability |
 | `can_read_audit` | `boolean` | No | `false` | Minimal capability |
@@ -306,7 +307,7 @@ Authorization uses explicit minimal capability flags rather than treating role n
 #### Constraints, access, and compatibility
 
 - Primary key: `id`; unique constraint on `code`.
-- Checks enforce stable-code format, permitted status, and name/description bounds.
+- Checks enforce stable-code format, permitted status, a non-empty trimmed name, and a maximum role-description length of 1,000 characters.
 - Active authenticated members may read active shared roles needed to understand their assignments.
 - Clients and tenant administrators cannot insert, update, or delete role definitions.
 - Role changes require a reviewed migration or exceptional audited platform path.
@@ -332,7 +333,7 @@ Auditable assignment of a shared role to one tenant membership. It is tenant-sco
 | `granted_at` | `timestamptz` | No | Transaction time | Start of grant |
 | `revoked_by_profile_id` | `uuid` | Yes | Null | Actor for revocation when user-initiated |
 | `revoked_at` | `timestamptz` | Yes | Null | Null means current grant |
-| `revocation_reason` | `text` | Yes | Null | Bounded safe reason |
+| `revocation_reason` | `text` | Yes | Null | Maximum 500 characters; safe reason only |
 | `created_at` | `timestamptz` | No | Transaction time | Immutable |
 
 #### Constraints and indexes
@@ -342,7 +343,7 @@ Auditable assignment of a shared role to one tenant membership. It is tenant-sco
 - FKs to role and optional grant/revoke actor profiles; no cascade deletion.
 - Partial unique index on `(tenant_membership_id, role_id)` where `revoked_at` is null.
 - Indexes on `(tenant_id, tenant_membership_id)`, `(tenant_id, role_id)`, and current grants.
-- Checks enforce revocation actor/time consistency and `revoked_at >= granted_at`.
+- Checks enforce revocation actor/time consistency, `revoked_at >= granted_at`, and a maximum revocation-reason length of 500 characters.
 
 #### Access, audit, and compatibility
 
@@ -367,22 +368,24 @@ Minimal append-oriented record of security and governance-significant operations
 | `tenant_id` | `uuid` | Yes | Null | Tenant context; null only for genuine platform-scope events |
 | `actor_type` | `text` | No | None | `user`, `service`, `platform_admin`, or `system` |
 | `actor_profile_id` | `uuid` | Yes | Null | Required for user actor; BIOS profile FK |
-| `actor_identifier` | `text` | Yes | Null | Bounded service/platform subject; never a secret |
+| `actor_identifier` | `text` | Yes | Null | Maximum 200 characters; service/platform subject; never a secret |
 | `action` | `text` | No | None | Governed initial action code |
 | `resource_type` | `text` | No | None | Governed resource code |
 | `resource_id` | `uuid` | Yes | Null | Target when represented by UUID |
 | `outcome` | `text` | No | None | `succeeded`, `denied`, or `failed` |
 | `correlation_id` | `uuid` | No | Generated UUID if absent | Groups related operation events |
 | `occurred_at` | `timestamptz` | No | Transaction time | Immutable event time |
-| `metadata` | `jsonb` | No | Empty object | Safe bounded object, not arbitrary logs |
+| `metadata` | `jsonb` | No | Empty object | JSON object; maximum serialized size 8,192 bytes; not arbitrary logs |
 
-Initial action codes are `tenant.created`, `membership.invited`, `membership.activated`, `membership.suspended`, `membership.revoked`, `role.granted`, `role.revoked`, and `platform.privileged_action`. New codes are additive and reviewed.
+**M001-D05 — APPROVED:** Migration 001 permits exactly these `resource_type` codes: `tenant`, `profile`, `tenant_membership`, `role`, `membership_role`, and `platform`. Every resource code must match `^[a-z][a-z0-9_]*$`. The vocabulary is additive in future migrations; Migration 001 must not add resource types for objects outside its six-table scope.
+
+**M001-D06 — APPROVED:** the complete initial action vocabulary is `tenant.created`, `tenant.status_changed`, `membership.invited`, `membership.activated`, `membership.suspended`, `membership.revoked`, `role.granted`, `role.revoked`, and `platform.privileged_action`. Tenant lifecycle changes must use `tenant.status_changed`; `tenant.created` remains the tenant-creation action. New action codes are additive and reviewed.
 
 #### Constraints and indexes
 
 - Primary key: `id`.
 - Foreign keys to tenant and actor profile do not cascade.
-- Checks enforce enumerated scope/actor/outcome values, action/resource code format, metadata is a JSON object, actor-field compatibility, non-null `tenant_id` for tenant scope, and null `tenant_id` only for explicit platform scope.
+- Checks enforce enumerated scope/actor/outcome/action/resource values, resource-code format, maximum `actor_identifier` length of 200 characters, metadata as a JSON object with maximum serialized size of 8,192 bytes, actor-field compatibility, non-null `tenant_id` for tenant scope, and null `tenant_id` only for explicit platform scope. **M001-D04 — APPROVED:** Migration 001 imposes no JSON nesting-depth limit.
 - Indexes on `(tenant_id, occurred_at desc)`, `(actor_profile_id, occurred_at desc)`, `correlation_id`, and `(resource_type, resource_id)`.
 - No unrestricted metadata search/index in Migration 001.
 
@@ -470,13 +473,14 @@ The minimum bootstrap operation creates a tenant, creates the initial membership
 
 There is no unrestricted global application-admin role in Migration 001. Exceptional access uses controlled infrastructure credentials, named human authorization outside ordinary application roles, least privilege, time-bounded access where supported, and a `platform.privileged_action` audit event with justification and correlation ID. A later operational standard must define break-glass approval and credential custody before hosted production use.
 
-**Implementation decision M001-D03 — approval required:** accept this four-path model and trusted-function surface as the minimum Phase 1 privileged design.
+**Implementation decision M001-D03 — APPROVED:** accept this four-path model and trusted-function surface as the minimum Phase 1 privileged design.
 
 ## 12. Required audit obligations
 
 | Operation | Required event | Transaction rule |
 |---|---|---|
 | Tenant bootstrap | `tenant.created`, initial membership/role events | Same transaction |
+| Tenant lifecycle change | `tenant.status_changed` | Same transaction |
 | Membership invitation | `membership.invited` | Same transaction |
 | Membership activation | `membership.activated` | Same transaction |
 | Membership suspension | `membership.suspended` | Same transaction |
@@ -485,7 +489,7 @@ There is no unrestricted global application-admin role in Migration 001. Excepti
 | Role revocation | `role.revoked` | Same transaction |
 | Exceptional platform change | `platform.privileged_action` | Same transaction when possible; otherwise correlated durable server audit |
 
-Metadata may include reason, prior/new status, role code, and request channel when safe. It must not contain credentials, tokens, unrestricted request bodies, or sensitive profile data.
+Metadata may include reason, prior/new status, role code, and request channel when safe. For `tenant.status_changed`, safe metadata should include `from_status`, `to_status`, and `reason` when applicable. It must not contain credentials, tokens, unrestricted request bodies, or sensitive profile data.
 
 ## 13. Acceptance test plan
 
@@ -504,19 +508,22 @@ The executable database test suite must include:
 9. `tenant_id` mutation is rejected;
 10. missing authentication/tenant authorization and anonymous access are denied;
 11. suspended and revoked memberships grant no tenant access;
-12. expired/not-yet-valid membership grants no tenant access;
-13. unauthorized membership transition and role grant fail;
-14. authorized tenant-admin transition and role grant succeed only through the intended path;
-15. assignment tenant compatibility FK rejects mismatched tenant/membership values;
-16. concurrent or repeated grants do not create duplicate current assignments;
-17. revocation preserves assignment history and re-granting creates a new episode;
-18. ordinary users cannot mutate audit rows;
-19. governed success writes the required audit event atomically;
-20. no operation may remove the last active tenant administrator without an approved replacement in the same transaction;
-21. suspended/archived tenant denies ordinary tenant access;
-22. migration seed roles have the expected immutable codes and minimal capabilities;
-23. a second migration replay attempt is handled according to Supabase migration tracking rather than duplicating objects; and
-24. structural snapshot/catalog assertions match the reviewed Migration 001 specification.
+12. a suspended or deactivated profile receives no tenant authorization even if a membership remains active;
+13. expired/not-yet-valid membership grants no tenant access;
+14. unauthorized membership transition and role grant fail;
+15. authorized tenant-admin transition and role grant succeed only through the intended path;
+16. assignment tenant compatibility FK rejects mismatched tenant/membership values;
+17. concurrent or repeated grants do not create duplicate current assignments;
+18. revocation preserves assignment history and re-granting creates a new episode;
+19. ordinary users cannot mutate audit rows;
+20. governed success writes the required audit event atomically;
+21. tenant lifecycle change writes `tenant.status_changed` with safe transition metadata;
+22. invalid action/resource codes and over-limit bounded fields are rejected;
+23. no operation may remove the last active tenant administrator without an approved replacement in the same transaction;
+24. suspended/archived tenant denies ordinary tenant access;
+25. migration seed roles have the expected immutable codes and minimal capabilities;
+26. a second migration replay attempt is handled according to Supabase migration tracking rather than duplicating objects; and
+27. structural snapshot/catalog assertions match the reviewed Migration 001 specification.
 
 Tests must assume authenticated identities using supported Supabase/PostgreSQL test helpers and must explicitly reset identity/session context between cases.
 
@@ -556,13 +563,17 @@ After merge or application to a shared environment, Migration 001 is immutable. 
 
 Migration 002 and later migrations may add Workspace after A-041 resolution, add registries, or extend identity/authorization through additive tables, columns, and policies. They must not reuse tenant nullability as sharing, change profile/Auth identity coupling without a migration plan, rewrite membership history, or weaken RLS.
 
-## 15. Contradictions and ambiguities reported
+## 15. Implementation-decision status
 
-No canonical conflict is identified in the requested reduced scope. Three implementation choices are not fully forced by the governing architecture and therefore require approval before SQL:
+No canonical conflict is identified in the reduced scope. Executive Office disposition is:
 
-1. **M001-D01:** independent `profiles.id` plus unique `auth_user_id`.
-2. **M001-D02:** shared platform roles with three minimal capability flags and initial `tenant_admin`, `analyst`, and `viewer` seeds; tenant-defined roles deferred.
-3. **M001-D03:** four-path administrative model using narrowly scoped trusted functions and server-held service-role credentials, with no global application-admin role.
+1. **M001-D01 — APPROVED:** independent `profiles.id` plus unique `auth_user_id`.
+2. **M001-D02 — APPROVED:** shared platform roles with three minimal capability flags and initial `tenant_admin`, `analyst`, and `viewer` seeds; tenant-defined roles deferred.
+3. **M001-D03 — APPROVED:** four-path administrative model using narrowly scoped trusted functions and server-held service-role credentials, with no global application-admin role.
+4. **M001-D04 — APPROVED:** exact bounded-field limits and JSON object/serialized-size constraint.
+5. **M001-D05 — APPROVED:** deterministic six-code audit resource vocabulary.
+6. **M001-D06 — APPROVED:** `tenant.status_changed` and the complete initial action vocabulary.
+7. **M001-D07 — DEFERRED BY DESIGN:** profile suspension/deactivation workflow. Its exclusion does not block SQL implementation; authorization still requires an active profile.
 
 The currently available workspace does not contain ARCH-001, ARCH-002, or DB-001 at the time DB-002 is written. This is a repository-state issue, not an architecture contradiction. Their approved content supplied in the preceding Gate 4 work was used as the design baseline; the files must be restored at their canonical paths before DB-002 is committed or its links validated in the repository.
 
@@ -581,7 +592,8 @@ The currently available workspace does not contain ARCH-001, ARCH-002, or DB-001
 - [x] No global application super-user is introduced.
 - [x] Service-role use is server-only, purpose-scoped, and audited.
 - [x] Ownership keys are immutable and tenant compatibility is structural.
-- [ ] Executive Office approves M001-D01, M001-D02, and M001-D03.
+- [x] Executive Office approved M001-D01 through M001-D06.
+- [x] M001-D07 is deferred outside Migration 001 and does not block implementation.
 
 ### Data model
 
@@ -633,12 +645,13 @@ The currently available workspace does not contain ARCH-001, ARCH-002, or DB-001
 
 ## 17. Readiness recommendation
 
-**READY WITH CONDITIONS**
+**READY FOR SQL IMPLEMENTATION**
 
-Engineering may translate DB-002 into SQL after the Executive Office approves M001-D01, M001-D02, and M001-D03 and the three Gate 4 governing files are present at their canonical repository paths. SQL implementation, RLS security review, executable tests, and clean local rebuild remain required before Migration 001 is approved for merge.
+Engineering may translate DB-002 into SQL. Readiness remains subject to SQL security review, executable pgTAP/RLS tests, clean local migration replay, and normal pull-request review.
 
 ## 18. Version history
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1 | 2026-08-02 | Resolved Migration 001 blockers through approved bounded-field limits, deterministic audit vocabularies, tenant lifecycle audit, approved D01–D06 dispositions, and explicit deferral of the profile-status transition workflow under D07 |
 | 1.0 | 2026-08-02 | Initial canonical implementation design for the reduced Migration 001 core platform foundation |
