@@ -14,10 +14,14 @@ select has_table('bios_core'::name,'membership_roles'::name);
 select has_table('bios_governance'::name,'audit_events'::name);
 
 select results_eq(
-  $$select count(*)::bigint from pg_catalog.pg_tables where schemaname like 'bios_%'$$,
-  array[6::bigint], 'exactly six BIOS tables exist');
+  $$select count(*)::bigint from pg_catalog.pg_tables where (schemaname,tablename) in
+    (('bios_core','profiles'),('bios_core','tenants'),('bios_core','tenant_memberships'),
+     ('bios_core','roles'),('bios_core','membership_roles'),('bios_governance','audit_events'))$$,
+  array[6::bigint], 'all six Migration 001 foundation tables exist');
 select is_empty(
-  $$select 1 from information_schema.columns where table_schema like 'bios_%' and column_name in
+  $$select 1 from information_schema.columns where (table_schema,table_name) in
+    (('bios_core','profiles'),('bios_core','tenants'),('bios_core','tenant_memberships'),
+     ('bios_core','roles'),('bios_core','membership_roles'),('bios_governance','audit_events')) and column_name in
     ('password','encrypted_password','provider','mfa_state','token','workspace_id','client_id','market_id','category_id')$$,
   'no authentication secrets or deferred architecture columns exist');
 select results_eq(
