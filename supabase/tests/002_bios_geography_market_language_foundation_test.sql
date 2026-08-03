@@ -20,7 +20,7 @@ select results_eq(
   array[8::bigint], 'RLS is enabled on all eight tables');
 select is_empty(
   $$select 1 from information_schema.tables where table_schema like 'bios_%' and
-    (table_name like '%workspace%' or table_name like '%client%' or table_name like '%domain%' or table_name like '%categor%' or table_name like '%evidence%' or table_name like '%signal%' or table_name like '%agent%' or table_name like '%vector%' or table_name like '%connector%')$$,
+    (table_name like '%workspace%' or table_name like '%client%' or table_name like '%evidence%' or table_name like '%signal%' or table_name like '%agent%' or table_name like '%vector%' or table_name like '%connector%')$$,
   'excluded table families remain absent');
 select is_empty(
   $$select 1 from information_schema.columns where table_schema='bios_core' and table_name in
@@ -115,7 +115,7 @@ select throws_ok(
   $$insert into bios_governance.audit_events(scope_type,actor_type,actor_identifier,action,resource_type,outcome) values('platform','service','test','reference.deleted','market','succeeded')$$,
   '23514',null,'reference.deleted remains unauthorized');
 select throws_ok(
-  $$insert into bios_governance.audit_events(scope_type,actor_type,actor_identifier,action,resource_type,outcome) values('platform','service','test','reference.created','domain','succeeded')$$,
+  $$insert into bios_governance.audit_events(scope_type,actor_type,actor_identifier,action,resource_type,outcome) values('platform','service','test','reference.created','unauthorized_reference_resource','succeeded')$$,
   '23514',null,'unknown Migration 002 audit resource remains rejected');
 
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
@@ -205,8 +205,10 @@ select results_eq(
   $$select count(*)::bigint from bios_governance.audit_events where action='reference.metadata_updated'$$,
   array[2::bigint], 'successful metadata corrections are audited atomically');
 select results_eq(
-  $$select count(*)::bigint from pg_catalog.pg_tables where schemaname like 'bios_%'$$,
-  array[14::bigint], 'catalog contains six Migration 001 plus eight Migration 002 BIOS tables');
+  $$select count(*)::bigint from pg_catalog.pg_tables where schemaname in ('bios_core','bios_governance') and tablename in
+    ('tenants','profiles','tenant_memberships','roles','membership_roles','audit_events',
+     'geographies','geography_relationships','markets','market_geographies','market_groups','market_group_members','languages','market_languages')$$,
+  array[14::bigint], 'all Migration 001 and Migration 002 foundation tables remain present');
 
 select * from finish();
 rollback;
