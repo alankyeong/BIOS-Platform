@@ -4,12 +4,12 @@
 |---|---|
 | Document ID | DB-005 |
 | Title | BIOS Migration 004 — Entity Foundation |
-| Version | 1.2 |
+| Version | 1.3 |
 | Status | Canonical |
 | Effective date | 2026-08-04 |
 | Owner | BIOS Executive Office — Data Architecture and Engineering |
 | Dependencies | ADR-001, ARCH-001, ARCH-002, DB-001, DB-002 v1.1, DB-003 v1.1, DB-004 v1.0, ENG-001, CANON-001 |
-| Supersedes | DB-005 v1.1 |
+| Supersedes | DB-005 v1.2 |
 | Review cadence | Before SQL implementation, before merge, and after relevant Atlas resolution |
 | Related documents | [ENG-001](../engineering/ENG-001_BIOS_Engineering_Handbook.md), [CANON-001](../engineering/CANON-001_Repository_and_Engineering_Standards.md), [ADR-001](../decisions/ADR-001_PostgreSQL_and_Supabase.md), [ARCH-001](../architecture/ARCH-001_Canonical_Platform_Architecture.md), [ARCH-002](../architecture/ARCH-002_Architecture_Assumption_Register.md), [DB-001](DB-001_Canonical_Data_Model.md), [DB-002](DB-002_Migration_001_Core_Platform_Foundation.md), [DB-003](DB-003_Migration_002_Geography_Market_and_Language_Foundation.md), [DB-004](DB-004_Migration_003_Domain_and_Category_Foundation.md) |
 
@@ -187,6 +187,16 @@ Unmerge is permitted in Migration 004 only through exceptional platform administ
 
 Migration 004 authorizes unmerge only under the Entity dependency model existing through Migration 004. Any later migration introducing Entity-dependent relationships, Market presence, Domain membership, Sources/Evidence, provenance, intelligence, or decision structures must explicitly revalidate, constrain, or supersede this unmerge contract before that migration is admitted. DB-005 does not define those future dependency behaviors.
 
+### 8.3 Historical/current Entity UUID resolution
+
+Migration 004 provides one narrow read-only identity resolver. Its sole business input is `entity_id` UUID. It accepts no caller-supplied Tenant, profile, scope, role, membership, or authorization value. Authorization is derived internally.
+
+For an authorized active Entity, it returns one row containing only `requested_entity_id` equal to the input UUID and `resolved_entity_id` equal to that same UUID. For an authorized merged Entity, it returns only the requested historical UUID and its directly referenced active merge-target UUID. Resolution is one hop because merge chains are prohibited; it does not recursively chase arbitrary chains.
+
+Candidate, archived, nonexistent, and unauthorized tenant-private UUIDs return no row. Inactive or missing tenant membership also returns no row. These outcomes are deliberately indistinguishable to prevent Entity-existence and cross-tenant disclosure. Normal database or system failures remain errors.
+
+The resolver is not an Entity search API, governance-record reader, alias lookup, Evidence API, provenance API, or tenant-discovery API. It returns no name, type, status, scope, Tenant, merge time, alias, description, audit metadata, or other governance field.
+
 ## 9. Alias lifecycle
 
 Permitted transitions are `candidate → active → superseded` and `candidate → superseded`. Superseded is terminal. Alias activation requires its Entity to be active. A merged or archived Entity accepts no new alias and no alias activation. Entity merge/archive does not cascade alias state.
@@ -210,7 +220,13 @@ Required invariants:
 
 RLS is mandatory on `entities` and `entity_aliases`. `entity_types` uses the shared-reference read pattern. Anonymous access is denied to all three tables. Authenticated users may read active shared Entity Types, active shared Entities, and their active aliases. Active tenant members may read active Entities/aliases in their Tenant. Tenant administrators may additionally read candidate, merged, archived, and superseded tenant-owned records required for governance.
 
-A merged Entity UUID remains resolvable through a narrow authorized, scope-compatible identity-resolution path so future Evidence and provenance records can retain the originally cited UUID and determine its current merge target. The implementation may use a narrow resolver function or equivalent governed mechanism. This contract does not grant broad authenticated visibility into merged governance records, reveal cross-tenant identity, or define a future Evidence API.
+A merged Entity UUID remains resolvable through the narrow contract in Section 8.3 so future Evidence and provenance records can retain the originally cited UUID and determine its current direct merge target. This contract does not grant broad authenticated visibility into merged governance records, reveal cross-tenant identity, or define a future Evidence API.
+
+For shared Entities, resolution requires an authenticated caller whose BIOS Profile is active; no Tenant membership is required. For tenant-private Entities, resolution requires an authenticated caller whose BIOS Profile is active and who has an active membership in the owning Tenant. Tenant-admin role is not required solely for resolution, so an ordinary active member may resolve identity within their own Tenant. This narrow capability grants no candidate, merged, or archived governance-record read, tenant administration, or mutation authority. Missing, suspended, ended, or otherwise inactive membership denies resolution immediately. Cross-tenant resolution is prohibited.
+
+The resolver is a narrowly hardened SECURITY DEFINER function with fixed empty `search_path`, fully qualified object references, and internally derived authorization. It uses `auth.uid()` to derive caller identity and re-derives the active BIOS Profile and any required active Tenant membership from Migration 001 structures. It accepts no caller-supplied authorization context. `PUBLIC` execution is revoked, anonymous execution is denied, and execution is granted explicitly to `authenticated`; an established trusted BIOS service/platform path may also use it where already authorized. It may bypass ordinary row visibility only to evaluate and return the two-UUID mapping in Section 8.3.
+
+The resolver is read-only and creates no BIOS governance audit event. Future operational or access telemetry outside the Migration 004 governance-audit contract is not prohibited.
 
 Ordinary authenticated users have no mutation authority. Active tenant administrators may use narrow governed functions for tenant-private candidate creation, metadata correction, alias governance, activation, archive, merge, and unmerge only within their own Tenant. Tenant-admin status confers no shared or cross-tenant authority. Shared mutation is restricted to trusted BIOS service/exceptional platform administration.
 
@@ -348,6 +364,21 @@ All executable tests belong in `supabase/tests/`; this document writes none.
 71. Migration 001, Migration 002, and Migration 003 regression suites remain green.
 72. Migration 004 structural assertions are scoped to Migration 004-owned objects.
 73. Clean replay produces deterministic catalog, constraint, policy, and function structure.
+74. An authenticated caller with an active BIOS Profile resolves an active shared Entity UUID to itself without Tenant membership.
+75. An authenticated caller with an active BIOS Profile resolves a merged shared Entity UUID to its direct active merge target in one hop.
+76. Resolver availability does not grant an ordinary authenticated caller broad read access to the merged shared Entity governance row.
+77. An ordinary authenticated active member resolves a merged tenant-private Entity UUID within the owning Tenant without tenant-admin role.
+78. A caller with membership only in another Tenant receives no resolver row for a tenant-private Entity.
+79. Missing, suspended, ended, or otherwise inactive owning-Tenant membership returns no resolver row.
+80. Anonymous callers cannot execute the resolver.
+81. A candidate Entity UUID returns no resolver row.
+82. An archived Entity UUID returns no resolver row.
+83. A nonexistent Entity UUID returns no resolver row.
+84. The resolver returns exactly `requested_entity_id` and `resolved_entity_id` and no governance fields.
+85. `PUBLIC` cannot execute the resolver and `authenticated` receives the explicit narrow execution grant.
+86. The resolver accepts only one business input, `entity_id` UUID, and exposes no caller-supplied Tenant, Profile, scope, role, membership, or authorization parameter.
+87. Resolver responses make nonexistent and unauthorized tenant-private UUIDs indistinguishable and disclose no cross-tenant existence.
+88. Successful resolver calls create no BIOS governance audit event.
 
 ## 16. Approved implementation decisions
 
@@ -444,7 +475,7 @@ M004-D01 through M004-D16 were approved by the BIOS Executive Office on 2026-08-
 ### M004-D12 — RLS visibility — APPROVED
 
 - **Decision:** Which lifecycle states each actor can read.
-- **Recommended option:** Active shared visible to authenticated users; active tenant-private visible to active members; non-active private governance states visible only to same-tenant admins/platform paths; merged UUIDs resolvable only through a narrow authorized scope-compatible path without broad or cross-tenant visibility.
+- **Recommended option:** Active shared visible to authenticated users; active tenant-private visible to active members; non-active private governance states visible only to same-tenant admins/platform paths; merged/current UUID resolution follows Sections 8.3 and 10 using one UUID input, two UUID outputs, active-Profile authentication, active owning-Tenant membership for private identity, no tenant-admin requirement solely for resolution, no-result non-disclosure, and a narrowly granted hardened SECURITY DEFINER function.
 - **Alternatives considered:** All authenticated lifecycle states; platform-mediated reads only; all tenant members see candidates/history.
 - **Reason:** Least privilege with enough administrative governance.
 - **Coupling/reversibility:** Medium API behavior; policy remains additive through reviewed migrations.
@@ -485,6 +516,8 @@ M004-D01 through M004-D16 were approved by the BIOS Executive Office on 2026-08-
 
 M004-D01 through M004-D16 were approved by the BIOS Executive Office on 2026-08-04. No known architecture SQL blocker remains for Migration 004.
 
+The merged-Entity resolver security interface is canonically determined by Sections 8.3 and 10.
+
 If SQL implementation, security review, executable test design, or migration replay discovers a new material ambiguity or architectural decision not explicitly governed by DB-005, implementation must stop rather than infer or invent architecture. The issue must return to the BIOS Executive Office for resolution before implementation continues. Outstanding implementation validation work is a future gate, not an unresolved architecture decision.
 
 ## 18. Readiness checklist
@@ -498,7 +531,7 @@ If SQL implementation, security review, executable test design, or migration rep
 - [x] Alias scope, context, history, and Source-document deferral specified.
 - [x] Claims/provenance boundary stated.
 - [x] Security, RLS, audit, and deletion posture specified.
-- [x] Seventy-three acceptance requirements defined.
+- [x] Eighty-eight acceptance requirements defined.
 - [x] M004-D01 through M004-D16 approved by the BIOS Executive Office.
 - [ ] SQL security review completed.
 - [ ] Executable pgTAP/RLS tests completed.
@@ -514,6 +547,7 @@ DB-005 is now Canonical and M004-D01 through M004-D16 are approved. Migration 00
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3 | 2026-08-04 | Canonical clarification of merged Entity UUID resolver authorization, output, non-disclosure, and SECURITY DEFINER contract; no architecture boundary change |
 | 1.2 | 2026-08-04 | Canonical admission following Executive Office approval of M004-D01 through M004-D16; no architecture boundary change |
 | 1.1 | 2026-08-04 | Precision amendment: active-Type unmerge invariant, historical alias-reference lifecycle, merged-UUID resolution, deterministic null/temporal alias duplication, and future unmerge revalidation gate |
 | 1.0 | 2026-08-03 | Initial proposed Migration 004 Entity Foundation implementation design |
