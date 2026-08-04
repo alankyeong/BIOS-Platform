@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Document ID | DB-007 |
-| Version | 1.3 |
+| Version | 1.4 |
 | Status | Canonical |
 | Effective date | 2026-08-04 |
-| Supersedes | DB-007 v1.2 |
+| Supersedes | DB-007 v1.3 |
 | Owner | BIOS Executive Office — Data Architecture and Engineering |
 | Document type | Implementation Design Specification |
 
@@ -22,7 +22,7 @@ Migration 006 establishes governed Evidence identity and exact Source Document p
 
 Evidence is source-grounded material. It is not an analytical conclusion. Audit records who changed BIOS governance state and when; provenance records what artifact supports Evidence and where within that artifact the support is located. Neither substitutes for the other.
 
-DB-007 v1.2 is Proposed. Its durable decisions require BIOS Executive Office disposition before SQL implementation.
+DB-007 v1.4 is Canonical. Its approved durable decisions govern Migration 006 SQL implementation.
 
 ## 2. Canonical authority and design posture
 
@@ -224,7 +224,7 @@ Evidence never broadens the visibility of its Source Document.
 ### 11.1 Scope compatibility
 
 - shared Evidence may derive only from an active shared Source Document classified `public`;
-- tenant-private Evidence may derive from an active shared Source Document or an active Source Document owned by the same Tenant;
+- tenant-private Evidence may derive only from an active shared `public` Source Document or an active same-Tenant private Source Document classified `tenant_confidential`, subject to Section 11.3;
 - shared Evidence may never derive from tenant-private, licensed, or restricted Source Documents;
 - tenant-private Evidence may never derive from another Tenant's Source Document;
 - tenant-private-to-shared promotion is absent;
@@ -243,9 +243,33 @@ Evidence may be equally or more restrictive than its Source Document, never less
 | `tenant_confidential` | None | `tenant_confidential`, `restricted` |
 | `restricted` | None | `restricted` |
 
-`tenant_confidential` and `restricted` are not treated as interchangeable. The table above is the complete approved ordering for Migration 006. Evidence classification becomes immutable after activation.
+`tenant_confidential` and `restricted` are not treated as interchangeable. The table above remains the complete non-broadening classification matrix, but it does not independently authorize a trusted operation to consume a Source Document. Evidence classification becomes immutable after activation.
 
-### 11.3 Reads
+### 11.3 Trusted Source Document authorization for Evidence mutation
+
+Migration 006 separates technical execution eligibility from business authorization to use a Source Document as provenance. Possession of `service_role` or access to a trusted `SECURITY DEFINER` path satisfies only technical eligibility. It does not confer unrestricted Source Document authority. `actor_identifier`, `correlation_id`, `purpose`, and `target_tenant_id` remain non-authorizing operation context.
+
+For Evidence creation and activation, the complete database-verifiable provenance-authorization predicate is:
+
+```text
+trusted execution eligibility
+AND canonical Source/Document lifecycle validity
+AND canonical scope/access-classification validity
+AND database-verifiable provenance authorization
+```
+
+Migration 006 admits exactly two provenance-authorization cases:
+
+1. **Shared/public:** an active shared Source Document classified `public`, provided every other DB-006/DB-007 invariant passes. No additional entitlement is required.
+2. **Same-Tenant private/tenant-confidential:** an active tenant-private Source Document classified `tenant_confidential`, provided `target_tenant_id` is supplied, identifies the owning Tenant, and the resulting Evidence remains tenant-private for that same Tenant. Tenant ownership equality is the database-verifiable business-authorization predicate. The context value itself is not authority.
+
+Migration 006 rejects shared `licensed` and shared `restricted` Source Documents because no canonical entitlement or trusted-reader mechanism lets PostgreSQL verify service authority to consume them. It also rejects every other unsupported combination, including cross-Tenant private provenance, shared Evidence from private Documents, missing or mismatched required Tenant context, and any attempt to use service-role possession or actor/purpose/correlation context as an access override.
+
+The database never interprets `purpose` text to authorize access. No string match, vocabulary inference, regular expression, or purpose-based ACL is permitted.
+
+Evidence creation from shared licensed or restricted Source Documents requires a future canonical authorization architecture capable of representing and verifying service entitlement or trusted-reader authority. That later architecture may evaluate capabilities, entitlements, service identities, purpose grants, access grants, or another governed mechanism. Migration 006 chooses none of them and creates no entitlement, service-purpose, or trusted-reader structure.
+
+### 11.4 Reads
 
 - anonymous callers read no Evidence or provenance;
 - authenticated callers with active BIOS Profiles may read active shared `public` Evidence and its provenance only while the cited Source Document is currently authorized to that caller through the Source Document read contract;
@@ -285,13 +309,14 @@ Until a separate approved capability amendment exists:
 - tenant-private Evidence operations are also restricted to that trusted path. A trusted mutation operation may accept `target_tenant_id UUID` only as operation context when Tenant ownership cannot be derived from provenance itself, including tenant Evidence derived from a shared Source Document;
 - `target_tenant_id` is never caller authority. Only the trusted platform service/governance execution path may supply it, and ordinary authenticated actors receive no execution grant on Migration 006 mutation functions;
 - the trusted function independently validates that the Tenant exists and is active where required, scope/Tenant consistency, Source Document scope and ownership, access-classification compatibility, Source and Document lifecycle, Language, predecessor/successor state, and every other DB-007 invariant;
-- for a same-Tenant private Source Document, `target_tenant_id` must equal the Document Tenant; for a shared Source Document it identifies the Tenant for which the trusted platform workflow creates private Evidence;
+- for an admitted same-Tenant private `tenant_confidential` Source Document, `target_tenant_id` must equal the Document Tenant; for an admitted shared `public` Source Document it identifies the Tenant for which the trusted platform workflow creates private Evidence;
+- shared `licensed`, shared `restricted`, and every other Source Document combination outside Section 11.3 are rejected regardless of service-role possession or operation-context content;
 - ordinary members, analysts, viewers, and tenant administrators receive no Evidence mutation authority merely from existing roles;
 - trusted-service possession alone does not define business authority: calls require a bounded actor identifier, correlation ID, governed purpose, and atomic audit.
 
 This is deliberately narrower than the expected future workflow. Migration 006 has no database dependency on a nonexistent governed work-item object. A future workflow/capability migration may replace or further constrain trusted Tenant context and may add explicit capabilities such as Evidence authoring and Evidence validation after Executive Office approval. Creation and validation must be independently authorizable; the validator must not be inferred from the creator role.
 
-An actor or trusted process must not create Evidence from a Source Document it cannot access under its approved service purpose. Evidence creation is never an indirect Source Document access bypass.
+A trusted process may create or activate Evidence only from a Source Document authorized by the database-verifiable Section 11.3 predicate. Evidence creation is never an indirect Source Document access bypass. `purpose` remains bounded descriptive audit context and is never parsed or interpreted as permission.
 
 ### 13.3 Trusted operation context
 
@@ -317,7 +342,7 @@ RLS is mandatory on both tables. Direct mutation by anonymous or authenticated c
 - require and validate the Section 13.3 actor identifier, correlation ID, and purpose consistently for every trusted mutation;
 - accept no caller-supplied Profile, role, membership, or authorization flags;
 - accept `target_tenant_id` only on the trusted mutation surface and treat it solely as validated operation context, never authorization;
-- validate Evidence, Source Document, Source, scope, Tenant, access classification, Language, lifecycle, and predecessor state;
+- validate Evidence, Source Document, Source, scope, Tenant, access classification, Language, lifecycle, predecessor state, and the exact Section 11.3 provenance-authorization predicate;
 - lock deterministically for successor operations;
 - write governance state and audit atomically;
 - expose only least-privilege execution grants;
@@ -404,7 +429,7 @@ All decisions below are Proposed and require BIOS Executive Office approval.
 ### M006-D07 — Scope and Tenant ownership — APPROVED — 2026-08-04
 
 - **Decision:** Shared/private Evidence.
-- **Recommended option:** Explicit shared/tenant scope; shared Evidence only from shared public Documents; same-Tenant derivation; no cross-Tenant or promotion path.
+- **Recommended option:** Explicit shared/tenant scope; admit trusted provenance only from shared/public Documents or same-Tenant private/tenant-confidential Documents; require owning-Tenant equality for the latter; reject cross-Tenant, shared licensed/restricted, and promotion paths.
 - **Alternatives:** Tenant-only; shared-only; promotion in Migration 006.
 - **Reason:** Matches canonical knowledge-scope rules and prevents provenance leakage.
 - **Coupling/reversibility:** High security coupling; future promotion requires a separate gate.
@@ -468,7 +493,7 @@ All decisions below are Proposed and require BIOS Executive Office approval.
 ### M006-D15 — Creation and validation authority — APPROVED — 2026-08-04
 
 - **Decision:** Who may mutate Evidence under the current role model.
-- **Recommended option:** Trusted governed service/exceptional platform path only; no role-name authority; report analyst capability gap and defer tenant authoring until explicit capabilities are approved. Apply the required bounded `actor_identifier`, textual `correlation_id`, and `purpose` contract consistently to every trusted mutation. Permit `target_tenant_id UUID` only as trusted, independently validated operation context for tenant-private Evidence. No context argument is authority.
+- **Recommended option:** Trusted governed service/exceptional platform path only; no role-name authority; report analyst capability gap and defer tenant authoring until explicit capabilities are approved. Apply the bounded operation-context contract consistently, but authorize provenance only through the database-verifiable Section 11.3 cases. Neither trusted-path possession nor any context argument grants unrestricted Source Document authority.
 - **Alternatives:** Tenant-admin authoring; analyst role-name grant; new capabilities in Migration 006.
 - **Reason:** Current capabilities do not authorize research actions and must not be silently broadened.
 - **Coupling/reversibility:** High authorization coupling; a capability migration is required for human authoring.
@@ -476,7 +501,7 @@ All decisions below are Proposed and require BIOS Executive Office approval.
 ### M006-D16 — RLS and Source access — APPROVED — 2026-08-04
 
 - **Decision:** Read/mutation enforcement.
-- **Recommended option:** Section 11/14 RLS, current Evidence-and-Source-Document read intersection, anonymous/direct mutation denial, no ordinary authenticated execution grant, one atomic Evidence/provenance creation operation, and narrow fixed-search-path trusted functions that derive authorization internally and validate the complete Section 13.3 operation context without treating it as authority.
+- **Recommended option:** Preserve Section 11/14 ordinary RLS and current read intersection; deny anonymous/direct mutation and ordinary authenticated execution; use one atomic Evidence/provenance creation operation; and require narrow fixed-search-path trusted functions to validate operation context plus the exact shared/public or same-Tenant private/tenant-confidential provenance authorization. Shared licensed/restricted provenance is deferred pending canonical entitlement/trusted-reader architecture.
 - **Alternatives:** Evidence-only access checks; application-only enforcement; general trusted reader.
 - **Reason:** Evidence creation/read must not bypass Source Document restrictions.
 - **Coupling/reversibility:** High security coupling.
@@ -533,9 +558,9 @@ All decisions below are Proposed and require BIOS Executive Office approval.
 24. Shared Evidence cannot cite tenant-private Source Documents.
 25. Shared Evidence cannot cite licensed or restricted shared Source Documents.
 26. Tenant Evidence can cite an active shared public Source Document.
-27. Tenant Evidence can cite an active shared licensed Source Document only through the trusted authorized path and remains non-public.
-28. Tenant Evidence can cite an active shared restricted Source Document only as restricted Evidence through the trusted authorized path.
-29. Tenant Evidence can cite an active same-Tenant Source Document.
+27. Tenant Evidence creation rejects an active shared licensed Source Document because no canonical service entitlement is database-verifiable.
+28. Tenant Evidence creation rejects an active shared restricted Source Document because no canonical trusted-reader authority is database-verifiable.
+29. Tenant Evidence can cite an active same-Tenant private Source Document classified `tenant_confidential` when required Tenant context matches ownership.
 30. Tenant Evidence cannot cite another Tenant's Source Document.
 31. Evidence cannot be less restrictive than Source Document provenance under every matrix row.
 32. Evidence may be more restrictive only in combinations explicitly listed in Section 11.2.
@@ -647,12 +672,25 @@ All decisions below are Proposed and require BIOS Executive Office approval.
 138. Successful trusted mutations record safe bounded correlation/purpose context and applicable Tenant/transition identifiers in audit metadata within DB-002's serialized JSON-object bound.
 139. Audit metadata excludes Evidence text, verbatim/normalized payload, Source Document content, passwords, tokens, secrets, arbitrary unbounded JSON, and unrestricted row snapshots.
 140. `actor_identifier`, `correlation_id`, `purpose`, and `target_tenant_id` are absent as Evidence/provenance business columns and exist only as function/audit context.
+141. Trusted execution eligibility or `service_role` possession alone does not authorize every Source Document for Evidence provenance.
+142. Trusted Evidence creation from an active shared `public` Source Document succeeds when every remaining lifecycle, scope, Language, anchor, and Evidence invariant passes.
+143. Trusted tenant-private Evidence creation from an active same-Tenant private `tenant_confidential` Source Document succeeds when `target_tenant_id` equals Document ownership and every remaining invariant passes.
+144. Tenant-private provenance rejects a missing `target_tenant_id` where the trusted operation requires Tenant context.
+145. Tenant-private provenance rejects a `target_tenant_id` different from Source Document ownership.
+146. Trusted Evidence creation from a shared `licensed` Source Document is rejected.
+147. Trusted Evidence creation from a shared `restricted` Source Document is rejected.
+148. A valid bounded `purpose` cannot override licensed or restricted Source Document rejection, and purpose text is never interpreted as an ACL or entitlement.
+149. A valid `actor_identifier` cannot override licensed, restricted, ownership, scope, or lifecycle rejection.
+150. A valid `correlation_id` cannot override licensed, restricted, ownership, scope, or lifecycle rejection.
+151. `service_role` possession cannot override licensed, restricted, cross-Tenant, ownership, scope, or lifecycle rejection.
+152. Cross-Tenant private provenance remains rejected even when every operation-context value is valid.
+153. Migration 006 introduces no entitlement, service-purpose, trusted-reader, service-identity capability, access-grant, role, or capability table/function/column.
 
-Acceptance-test count: **140**.
+Acceptance-test count: **153**.
 
 ## 19. SQL-blocker review
 
-M006-D01 through M006-D19 are approved. No known unresolved durable SQL architecture or security decision remains. Migration 006 implementation may proceed against DB-007 v1.3 Canonical. If implementation discovers a new durable ambiguity, implementation must stop and return it to the BIOS Executive Office rather than invent architecture.
+M006-D01 through M006-D19 remain approved, including the Executive Office trusted Source Document authorization clarification recorded on 2026-08-04. No known unresolved durable SQL architecture or security decision remains. Migration 006 implementation may proceed against DB-007 v1.4 Canonical. If implementation discovers a new durable ambiguity, implementation must stop and return it to the BIOS Executive Office rather than invent architecture.
 
 Additionally, the following implementation conditions are explicit:
 
@@ -660,6 +698,7 @@ Additionally, the following implementation conditions are explicit:
 2. Automated extraction, stored-content reconstruction, and multilingual derivative Evidence activation require an approved Representation migration. They are outside the first manual Evidence slice.
 3. SQL must not invent any additional field, vocabulary, scope rule, anchor type, access ordering, lifecycle transition, authorization path, audit action, or seed.
 4. If Executive Office changes provenance cardinality, access propagation, or Representation sequencing, the table/constraint design must be reviewed before SQL begins.
+5. Migration 006 must not invent service entitlement, purpose-based authorization, licensed/restricted access, service-identity capability, or trusted-reader authority. Shared licensed/restricted Evidence creation remains deferred.
 
 Human analyst or Tenant Evidence authoring requires a separately approved capability design. Automated extraction, stored-content reconstruction, OCR, translation, model-derived normalization, multilingual-derived Evidence activation, and Representation-aware Evidence workflows require canonical Representation architecture first. These are future capability and architecture gates and do not block the trusted-only manually governed Migration 006 implementation.
 
@@ -685,7 +724,7 @@ This preserves DB-006 material-revision identity: a new Source Document UUID doe
 - [x] Shared/private and access non-broadening rules proposed.
 - [x] Analyst-authority gap explicitly reported.
 - [x] Lifecycle, correction, supersession, and concurrency proposed.
-- [x] 140 executable acceptance requirements defined.
+- [x] 153 executable acceptance requirements defined.
 - [x] M006-D01 through M006-D19 approved by BIOS Executive Office.
 - [ ] Analyst/human authoring capability admitted, if required for the first production workflow.
 - [ ] Representation migration admitted before automated or multilingual-derived Evidence activation.
@@ -695,12 +734,13 @@ This preserves DB-006 material-revision identity: a new Source Document UUID doe
 
 ## 22. Recommendation
 
-**DB-007 v1.3 CANONICAL — READY FOR MIGRATION 006 IMPLEMENTATION**
+**DB-007 v1.4 CANONICAL — READY TO RESUME MIGRATION 006 IMPLEMENTATION**
 
 ## 23. Version history
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4 | 2026-08-04 | Migration 006 trusted Source Document authorization clarified to admit only shared/public and same-Tenant tenant-private/tenant-confidential provenance; shared licensed/restricted Evidence creation deferred pending canonical entitlement/trusted-reader architecture; no table-boundary change |
 | 1.3 | 2026-08-04 | Canonical approval of M006-D01 through M006-D19; Evidence & Provenance Foundation admitted for Migration 006 implementation |
 | 1.2 | 2026-08-04 | Final precision definition of trusted Evidence mutation operation context and bounded audit metadata; no architecture or table-boundary change |
 | 1.1 | 2026-08-04 | Final precision clarification of trusted Tenant context, historical provenance visibility, atomic exactly-one provenance creation, and Representation/automation enforcement boundary; no table-boundary change |
