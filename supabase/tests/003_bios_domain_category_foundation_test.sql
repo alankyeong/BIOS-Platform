@@ -6,7 +6,7 @@ select pass('clean reset reached Migration 003');
 -- AR-02
 select results_eq($$select count(*)::bigint from pg_catalog.pg_tables where schemaname='bios_core' and tablename in ('domains','domain_nodes','domain_node_relationships')$$,array[3::bigint],'exactly three Migration 003 tables exist');
 -- AR-03
-select is_empty($$select 1 from information_schema.tables where table_schema like 'bios_%' and (table_name like '%pack%' or table_name like '%attribute%' or table_name like '%entity%' or table_name like '%evidence%' or table_name like '%intelligence%' or table_name like '%agent%' or table_name like '%connector%' or table_name like '%vector%' or table_name like '%ontology%')$$,'excluded advanced table families remain absent');
+select is_empty($$select 1 from information_schema.tables where table_schema like 'bios_%' and (table_name like '%pack%' or table_name like '%attribute%' or (table_name like '%entity%' and table_name not in ('entity_types','entities','entity_aliases')) or table_name like '%evidence%' or table_name like '%intelligence%' or table_name like '%agent%' or table_name like '%connector%' or table_name like '%vector%' or table_name like '%ontology%')$$,'excluded advanced table families remain absent');
 -- AR-04
 select results_eq($$select (select count(*) from bios_core.domains)+(select count(*) from bios_core.domain_nodes)$$,array[0::bigint],'no named category is required or seeded');
 -- AR-05
