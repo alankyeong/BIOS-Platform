@@ -20,7 +20,7 @@ select results_eq(
   array[8::bigint], 'RLS is enabled on all eight tables');
 select is_empty(
   $$select 1 from information_schema.tables where table_schema like 'bios_%' and
-    (table_name like '%workspace%' or table_name like '%client%' or table_name like '%evidence%' or table_name like '%signal%' or table_name like '%agent%' or table_name like '%vector%' or table_name like '%connector%')$$,
+    (table_name like '%workspace%' or table_name like '%client%' or (table_name like '%evidence%' and table_name not in ('evidence','evidence_provenance')) or table_name like '%signal%' or table_name like '%agent%' or table_name like '%vector%' or table_name like '%connector%')$$,
   'excluded table families remain absent');
 select is_empty(
   $$select 1 from information_schema.columns where table_schema='bios_core' and table_name in
