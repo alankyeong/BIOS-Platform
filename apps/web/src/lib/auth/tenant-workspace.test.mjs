@@ -34,11 +34,18 @@ describe("tenant workspace entry", () => {
 
   it("sends an invalid session to sign in with a safe return path", () => {
     assert.deepEqual(
-      decideTenantWorkspaceEntry({ status: "unauthenticated" }, "tenant one/../../admin"),
+      decideTenantWorkspaceEntry({ status: "unauthenticated" }, "tenant_one"),
       {
         kind: "redirect_to_login",
-        destination: "/login?next=%2Ftenants%2Ftenant%2520one%252F..%252F..%252Fadmin",
+        destination: "/login?next=%2Ftenants%2Ftenant_one",
       },
+    );
+  });
+
+  it("rejects a malformed tenant path before constructing a login return URL", () => {
+    assert.deepEqual(
+      decideTenantWorkspaceEntry({ status: "unauthenticated" }, "tenant one/../../admin"),
+      { kind: "workspace_unavailable" },
     );
   });
 
