@@ -15,6 +15,12 @@ export function decideTenantWorkspaceEntry(
   authorization: BiosTenantAuthorization,
   tenantCode: string,
 ): TenantWorkspaceDecision {
+  // Tenant codes use the canonical database vocabulary. Reject malformed path
+  // values before constructing a return URL or attempting to locate a tenant.
+  if (!/^[a-z][a-z0-9_]*$/.test(tenantCode)) {
+    return { kind: "workspace_unavailable" };
+  }
+
   switch (authorization.status) {
     case "authorized":
       return {
